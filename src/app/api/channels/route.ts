@@ -1,63 +1,62 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { prisma } from '@/lib/db'
-import { auth } from '@/auth'
-import { z } from 'zod'
-
-const CreateChannelSchema = z.object({
-    channelId: z.string(),
-    channelName: z.string(),
-    channelHandle: z.string().optional(),
-    thumbnail: z.string().optional(),
-})
+import { createClient } from '@/lib/supabase/server'
 
 export async function GET(req: NextRequest) {
-    const session = await auth()
-    if (!session?.user?.id) {
+    const supabase = await createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+
+    if (!user) {
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    try {
-        const channels = await prisma.channel.findMany({
-            where: { userId: session.user.id },
-            orderBy: { createdAt: 'desc' },
-        })
-        return NextResponse.json(channels)
-    } catch (error) {
-        return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
+    const { data: channels, error } = await supabase
+        .from('channels')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false })
+
+    if (error) {
+        return NextResponse.json({ error: error.message }, { status: 500 })
     }
+
+    return NextResponse.json(channels)
 }
 
 export async function POST(req: NextRequest) {
-    const session = await auth()
-    if (!session?.user?.id) {
+    const supabase = await createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+
+    if (!user) {
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
     try {
-        const json = await req.json()
-        const body = CreateChannelSchema.parse(json)
+        const body = await req.json()
+        // Minimal validation
+        if (!body.channelId) throw new Error("Missing channelId")
 
-        const existing = await prisma.channel.findFirst({
-            where: {
-                userId: session.user.id,
-                channelId: body.channelId
+        const { data, error } = await supabase
+            .from('channels')
+            .insert({
+                user_id: user.id,
+                channel_id: body.channelId,
+                channel_name: body.channelName,
+                channel_handle: body.channelHandle,
+                thumbnail: body.thumbnail
+            })
+            .select()
+            .single()
+
+        if (error) {
+            if (error.code === '23505') { // Unique constraint
+                return NextResponse.json({ error: 'Channel already connected' }, { status: 400 })
             }
-        })
-
-        if (existing) {
-            return NextResponse.json({ error: 'Channel already connected' }, { status: 400 })
+            throw error
         }
 
-        const channel = await prisma.channel.create({
-            data: {
-                userId: session.user.id,
-                ...body,
-            }
-        })
-
-        return NextResponse.json(channel)
-    } catch (error) {
+        return NextResponse.json(data)
+    } catch (error: any) {
         console.error(error)
-        return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
+        return NextResponse.json({ error: error.message || 'Internal Server Error' }, { status: 500 })
     }
 }

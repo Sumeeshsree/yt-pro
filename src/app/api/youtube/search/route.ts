@@ -1,12 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { YouTubeAPI } from '@/lib/youtube'
-import { auth } from '@/auth'
+import { createClient } from '@/lib/supabase/server'
 
-export const runtime = 'edge' // Edge runtime as requested
+export const runtime = 'edge'
 
 export async function GET(req: NextRequest) {
-    const session = await auth()
-    if (!session) {
+    // Edge-compatible Supabase Auth check
+    // Note: createClient in 'server.ts' uses 'cookies()', which works in Edge
+
+    const supabase = await createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+
+    if (!user) {
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
